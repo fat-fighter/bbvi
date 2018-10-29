@@ -9,15 +9,24 @@ class OptimizerAE(object):
         preds_sub = preds
         labels_sub = labels
 
-        self.cost = norm * tf.reduce_mean(tf.nn.weighted_cross_entropy_with_logits(logits=preds_sub, targets=labels_sub, pos_weight=pos_weight))
-        self.optimizer = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)  # Adam Optimizer
+        self.cost = norm * tf.reduce_mean(
+            tf.nn.weighted_cross_entropy_with_logits(
+                logits=preds_sub, targets=labels_sub, pos_weight=pos_weight
+            )
+        )
+        self.optimizer = tf.train.AdamOptimizer(
+            learning_rate=FLAGS.learning_rate
+        )
 
         self.opt_op = self.optimizer.minimize(self.cost)
         self.grads_vars = self.optimizer.compute_gradients(self.cost)
 
-        self.correct_prediction = tf.equal(tf.cast(tf.greater_equal(tf.sigmoid(preds_sub), 0.5), tf.int32),
-                                           tf.cast(labels_sub, tf.int32))
-        self.accuracy = tf.reduce_mean(tf.cast(self.correct_prediction, tf.float32))
+        self.correct_prediction = tf.equal(
+            tf.cast(tf.greater_equal(tf.sigmoid(preds_sub), 0.5), tf.int32),
+            tf.cast(labels_sub, tf.int32)
+        )
+        self.accuracy = tf.reduce_mean(
+            tf.cast(self.correct_prediction, tf.float32))
 
 
 class OptimizerVAE(object):
@@ -25,8 +34,10 @@ class OptimizerVAE(object):
         preds_sub = preds
         labels_sub = labels
 
-        self.cost = norm * tf.reduce_mean(tf.nn.weighted_cross_entropy_with_logits(logits=preds_sub, targets=labels_sub, pos_weight=pos_weight))
-        self.optimizer = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)  # Adam Optimizer
+        self.cost = norm * tf.reduce_mean(tf.nn.weighted_cross_entropy_with_logits(
+            logits=preds_sub, targets=labels_sub, pos_weight=pos_weight))
+        self.optimizer = tf.train.AdamOptimizer(
+            learning_rate=FLAGS.learning_rate)  # Adam Optimizer
 
         # Latent loss
         self.log_lik = self.cost
@@ -39,4 +50,5 @@ class OptimizerVAE(object):
 
         self.correct_prediction = tf.equal(tf.cast(tf.greater_equal(tf.sigmoid(preds_sub), 0.5), tf.int32),
                                            tf.cast(labels_sub, tf.int32))
-        self.accuracy = tf.reduce_mean(tf.cast(self.correct_prediction, tf.float32))
+        self.accuracy = tf.reduce_mean(
+            tf.cast(self.correct_prediction, tf.float32))

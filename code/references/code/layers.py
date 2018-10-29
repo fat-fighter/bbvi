@@ -1,4 +1,4 @@
-from gae.initializations import *
+from initializations import *
 import tensorflow as tf
 
 flags = tf.app.flags
@@ -63,13 +63,14 @@ class Layer(object):
             outputs = self._call(inputs)
             return outputs
 
-
+        
 class GraphConvolution(Layer):
     """Basic graph convolution layer for undirected graph without edge labels."""
     def __init__(self, input_dim, output_dim, adj, dropout=0., act=tf.nn.relu, **kwargs):
         super(GraphConvolution, self).__init__(**kwargs)
         with tf.variable_scope(self.name + '_vars'):
             self.vars['weights'] = weight_variable_glorot(input_dim, output_dim, name="weights")
+            #self.vars['bias'] = tf.Variable(tf.zeros((output_dim)), name="bias")
         self.dropout = dropout
         self.adj = adj
         self.act = act
@@ -77,18 +78,23 @@ class GraphConvolution(Layer):
     def _call(self, inputs):
         x = inputs
         x = tf.nn.dropout(x, 1-self.dropout)
-        x = tf.matmul(x, self.vars['weights'])
+        x = tf.matmul(x, self.vars['weights']) #+ self.vars['bias']
         x = tf.sparse_tensor_dense_matmul(self.adj, x)
         outputs = self.act(x)
         return outputs
 
+    def apply_regularizer(self, regularizer):
+        return 0
+        #return regularizer(self.vars['weights'])
 
+    
 class GraphConvolutionSparse(Layer):
     """Graph convolution layer for sparse inputs."""
     def __init__(self, input_dim, output_dim, adj, features_nonzero, dropout=0., act=tf.nn.relu, **kwargs):
         super(GraphConvolutionSparse, self).__init__(**kwargs)
         with tf.variable_scope(self.name + '_vars'):
             self.vars['weights'] = weight_variable_glorot(input_dim, output_dim, name="weights")
+            #self.vars['bias'] = tf.Variable(tf.zeros((output_dim)), name="bias")
         self.dropout = dropout
         self.adj = adj
         self.act = act
@@ -98,11 +104,44 @@ class GraphConvolutionSparse(Layer):
     def _call(self, inputs):
         x = inputs
         x = dropout_sparse(x, 1-self.dropout, self.features_nonzero)
-        x = tf.sparse_tensor_dense_matmul(x, self.vars['weights'])
+        x = tf.sparse_tensor_dense_matmul(x, self.vars['weights']) #+ self.vars['bias']
         x = tf.sparse_tensor_dense_matmul(self.adj, x)
         outputs = self.act(x)
         return outputs
 
+    def apply_regularizer(self, regularizer):
+        return 0
+        #return regularizer(self.vars['weights'])
+
+
+class WeightedInnerProductDecoder(Layer):
+    """Decoder model layer for link prediction."""
+    def __init__(self, input_dim, dropout=0., act=tf.nn.sigmoid, **kwargs):
+        super(WeightedInnerProductDecoder, self).__init__(**kwargs)
+        with tf.variable_scope(self.name + '_weight'):
+            self.vars['weights'] = matrix_weight_variable_truncated_normal(input_dim, name="matrix_weight")
+        self.dropout = dropout
+        self.act = act
+
+    def get_weight_matrix(self):
+        W = (self.vars['weights'] + tf.transpose(self.vars['weights'])) * 1/2
+        return W
+    
+    def _call(self, inputs):
+
+        W = (self.vars['weights'] + tf.transpose(self.vars['weights'])) * 1/2
+        
+        inputs = tf.nn.dropout(inputs, 1-self.dropout)
+        x = tf.transpose(inputs)
+        #inputs = inputs + tf.matmul(inputs, W)
+        inputs = tf.matmul(inputs, W)
+        x = tf.matmul(inputs, x)
+        x = tf.reshape(x, [-1])
+        outputs = self.act(x)
+        return outputs
+
+    def apply_regularizer(self, regularizer):
+        return regularizer(self.vars['weights'])
 
 class InnerProductDecoder(Layer):
     """Decoder model layer for link prediction."""

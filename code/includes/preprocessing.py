@@ -16,7 +16,8 @@ def preprocess_graph(adj):
     adj_ = adj + sp.eye(adj.shape[0])
     rowsum = np.array(adj_.sum(1))
     degree_mat_inv_sqrt = sp.diags(np.power(rowsum, -0.5).flatten())
-    adj_normalized = adj_.dot(degree_mat_inv_sqrt).transpose().dot(degree_mat_inv_sqrt).tocoo()
+    adj_normalized = adj_.dot(degree_mat_inv_sqrt)
+    adj_normalized = adj_normalized.transpose().dot(degree_mat_inv_sqrt).tocoo()
     return sparse_to_tuple(adj_normalized)
 
 
@@ -35,7 +36,9 @@ def mask_test_edges(adj):
     # TODO: Clean up.
 
     # Remove diagonal elements
-    adj = adj - sp.dia_matrix((adj.diagonal()[np.newaxis, :], [0]), shape=adj.shape)
+    adj = adj - sp.dia_matrix(
+        (adj.diagonal()[np.newaxis, :], [0]), shape=adj.shape
+    )
     adj.eliminate_zeros()
     # Check that diag is zero:
     assert np.diag(adj.todense()).sum() == 0
@@ -53,7 +56,9 @@ def mask_test_edges(adj):
     test_edge_idx = all_edge_idx[num_val:(num_val + num_test)]
     test_edges = edges[test_edge_idx]
     val_edges = edges[val_edge_idx]
-    train_edges = np.delete(edges, np.hstack([test_edge_idx, val_edge_idx]), axis=0)
+    train_edges = np.delete(
+        edges, np.hstack([test_edge_idx, val_edge_idx]), axis=0
+    )
 
     def ismember(a, b, tol=5):
         rows_close = np.all(np.round(a - b[:, None], tol) == 0, axis=-1)
@@ -104,7 +109,9 @@ def mask_test_edges(adj):
     data = np.ones(train_edges.shape[0])
 
     # Re-build adj matrix
-    adj_train = sp.csr_matrix((data, (train_edges[:, 0], train_edges[:, 1])), shape=adj.shape)
+    adj_train = sp.csr_matrix(
+        (data, (train_edges[:, 0], train_edges[:, 1])), shape=adj.shape
+    )
     adj_train = adj_train + adj_train.T
 
     # NOTE: these edge lists only contain single direction of edge!

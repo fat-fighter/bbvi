@@ -1,5 +1,3 @@
-from __future__ import division
-
 import os
 import time
 from tqdm import tqdm
@@ -14,10 +12,11 @@ import scipy.sparse as sp
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import average_precision_score
 
+from includes.utils import load_data
+from includes.preprocessing import preprocess_graph, construct_feed_dict, sparse_to_tuple, mask_test_edges
+
 from vgae.optimizer import OptimizerAE, OptimizerVAE
-from vgae.input_data import load_data
 from vgae.model import GCNModelAE, GCNModelVAE
-from vgae.preprocessing import preprocess_graph, construct_feed_dict, sparse_to_tuple, mask_test_edges
 
 # Settings
 flags = tf.app.flags
@@ -38,7 +37,7 @@ model_str = FLAGS.model
 dataset_str = FLAGS.dataset
 
 # Load data
-adj, features = load_data(dataset_str)
+adj, features = load_data("graph", dataset=dataset_str)
 
 # Store original adjacency matrix (without diagonal entries) for later
 adj_orig = adj

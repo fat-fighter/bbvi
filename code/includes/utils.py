@@ -1,10 +1,19 @@
 import math
 import numpy as np
-import tensorflow as tf
+import pickle as pkl
+import networkx as nx
+import scipy.sparse as sp
 
 
-def get_data(data, **args):
-    def spiral(N_tr=5000, N_ts=1000):
+def parse_index_file(filename):
+    index = []
+    for line in open(filename):
+        index.append(int(line.strip()))
+    return index
+
+
+def load_data(datagroup, **args):
+    def spiral(dataset="spiral", N_tr=5000, N_ts=1000):
         D = 2
         K = 5
         X_tr = np.zeros((N_tr * K, D))
@@ -26,26 +35,52 @@ def get_data(data, **args):
 
         return X_tr, X_ts
 
-    def mnist(dir="data/mnist"):
-        mnist = tf.contrib.learn.datasets.mnist.load_mnist(
-            train_dir=dir
-        )
+    def mnist(dataset="binary", dir="data/mnist"):
+        from tensorflow.examples.tutorials.mnist import input_data
+
+        mnist = input_data.read_data_sets("data/mnist/", one_hot=True)
 
         test_data = mnist.test.images
         train_data = mnist.train.images
 
-        train_data[train_data < 0.5] = 0
-        train_data[train_data > 0] = 1
-
-        test_data[test_data < 0.5] = 0
-        test_data[test_data > 0] = 1
-
         return train_data, test_data
 
-    if data == "spiral":
+    def graph(dataset="citeseer", dir="data/graphs/"):
+        names = ["x", "tx", "allx", "graph"]
+        objects = []
+        for i in range(len(names)):
+            objects.append(
+                pkl.load(open(
+                    dir + "ind.{}.{}".format(dataset, names[i]))
+                )
+            )
+        x, tx, allx, graph = tuple(objects)
+        test_idx_reorder = parse_index_file(
+            dir + "ind.{}.test.index".format(dataset)
+        )
+        test_idx_range = np.sort(test_idx_reorder)
+
+        if dataset == "citeseer":
+            # Fix citeseer dataset (there are some isolated nodes in the graph)
+            # Find isolated nodes, add them as zero-vecs into the right position
+            test_idx_range_full = range(
+                min(test_idx_reorder), max(test_idx_reorder)+1)
+            tx_extended = sp.lil_matrix((len(test_idx_range_full), x.shape[1]))
+            tx_extended[test_idx_range-min(test_idx_range), :] = tx
+            tx = tx_extended
+
+        features = sp.vstack((allx, tx)).tolil()
+        features[test_idx_reorder, :] = features[test_idx_range, :]
+        adj = nx.adjacency_matrix(nx.from_dict_of_lists(graph))
+
+        return adj, features
+
+    if datagroup == "spiral":
         return spiral(**args)
-    elif data == "mnist":
+    elif datagroup == "mnist":
         return mnist(**args)
+    elif datagroup == "graph":
+        return graph(**args)
     else:
         assert(False)
 
@@ -75,3 +110,8 @@ class Dataset:
 
     def __len__(self):
         return self.epoch_len
+
+
+def sample_gumbel(shape, eps=1e-20):
+    U = np.random.uniform(0, 1, shape)
+    return - np.log(eps - np.log(U + eps))
