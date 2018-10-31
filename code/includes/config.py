@@ -9,6 +9,7 @@ class Config:
 
             self.latent_type = "binary"
             self.latent_dim = 50
+            self.n_classes = 5
 
             self.latent_prior_weights = np.zeros(
                 self.latent_dim, dtype=float

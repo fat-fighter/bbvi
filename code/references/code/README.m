@@ -1,2 +1,0 @@
-## Train
-`python train.py`
