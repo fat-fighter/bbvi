@@ -1,3 +1,5 @@
+import qupa
+import qupa.pcd as pcd
 import numpy as np
 import tensorflow as tf
 
@@ -61,3 +63,88 @@ class NormalFactorial:
         res = tf.reduce_mean(0.5 * tf.reduce_sum(res, axis=1))
 
         return res
+
+
+class RBM:
+    def __init__(self, name, num_var1, num_var2, weight_decay,
+                 num_samples=100, num_gibbs_iter=40, use_qupa=False):
+        self.num_var1 = num_var1
+        self.num_var2 = num_var2
+        self.num_var = num_var1 + num_var2
+        self.weight_decay = weight_decay
+        self.name = name
+
+        # bias on the left side
+        self.b1 = tf.Variable(
+            tf.zeros(shape=[self.num_var1, 1], dtype=tf.float32, name='bias1'))
+        # bias on the right side
+        self.b2 = tf.Variable(
+            tf.zeros(shape=[self.num_var2, 1], dtype=tf.float32, name='bias2'))
+        # pairwise weight
+        self.w = tf.Variable(tf.zeros(
+            shape=[self.num_var1, self.num_var2], dtype=tf.float32, name='pairwise'))
+
+        # sampling options
+        self.num_samples = num_samples
+        self.use_qupa = use_qupa
+
+        # concat b
+        b = tf.concat(values=[tf.squeeze(self.b1),
+                              tf.squeeze(self.b2)], axis=0)
+
+        if not self.use_qupa:
+            # init pcd class implemented in QuPA
+            self.sampler = pcd.PCD(left_size=self.num_var1, right_size=self.num_var2,
+                                   num_samples=self.num_samples, dtype=tf.float32)
+        else:
+            # init population annealing class in QuPA
+            self.sampler = qupa.PopulationAnnealer(left_size=self.num_var1, right_size=self.num_var2,
+                                                   num_samples=self.num_samples, dtype=tf.float32)
+
+        # This returns a scalar tensor with the gradient of log z. Don't trust its value.
+        self.log_z_train = self.sampler.training_log_z(
+            b, self.w, num_mcmc_sweeps=num_gibbs_iter)
+
+        # This returns the internal log z variable in QuPA sampler. We wil use this variable in evaluation.
+        self.log_z_value = self.sampler.log_z_var
+
+        # get always the samples after updating train log z
+        with tf.control_dependencies([self.log_z_train]):
+            self.samples = self.sampler.samples()
+
+        # Define inverse temperatures used for AIS. Increasing the # of betas improves the precision of log z estimates.
+        betas = tf.linspace(tf.constant(0.), tf.constant(1.), num=1000)
+        # Define log_z estimation for evaluation.
+        eval_logz = qupa.ais.evaluation_log_z(
+            b, self.w, init_biases=None, betas=betas, num_samples=1024)
+
+        # Update QuPA internal log z variable with the eval_logz
+        self.log_z_update = self.log_z_value.assign(eval_logz)
+
+    def energy_tf(self, samples):
+        """
+        Computes the energy function -b^T * z - z^T * w * z for the Boltzmann machine.
+        Args:
+            samples: matrix with size (num_samples * num_vars)
+
+        Returns: 
+            energy for each sample.
+        """
+        samples1 = tf.slice(samples, [0, 0], [-1, self.num_var1])
+        samples2 = tf.slice(samples, [0, self.num_var1], [-1, -1])
+
+        energy = tf.matmul(samples1, self.b1) + tf.matmul(samples2, self.b2) + tf.reduce_sum(
+            tf.matmul(samples1, self.w) * samples2, 1, keepdims=True)
+        energy = - tf.squeeze(energy, axis=1)
+        return energy
+
+    def log_prob(self, samples, is_training=True):
+        """
+        Computes the log of normalized probability of samples: log(exp(-E(z))/Z) = -E(z) - log(Z)
+        Args:
+            samples:  matrix with size (num_samples * num_vars)
+
+        Returns: 
+            log prob. for each sample.
+        """
+        return - self.energy_tf(samples) - self.log_z_value
