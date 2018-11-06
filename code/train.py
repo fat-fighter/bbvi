@@ -33,17 +33,10 @@ def regeneration_plot():
     ax2 = plt.subplot(gs[1])
 
     def reshape(images):
-        images = images.reshape((100, 28, 28))
-        images = np.concatenate(images, axis=1)
-        images = np.array([images[:, x:x+280]
-                           for x in range(0, 2800, 280)])
-        images = np.concatenate(images, axis=0)
-        images = np.concatenate(
-            [np.zeros((280, 10)), images, np.zeros((280, 10))], axis=1
-        )
-        images = np.concatenate(
-            [np.zeros((10, 300)), images, np.zeros((10, 300))], axis=0
-        )
+        images = images.reshape((10, 10, 28, 28))
+        images = np.concatenate(np.split(images, 10, axis=0), axis=3)
+        images = np.concatenate(np.split(images, 10, axis=1), axis=2)
+        images = np.squeeze(images)
 
         return images
 
@@ -81,7 +74,6 @@ def sample_plot():
         for j in range(10):
             eps = vae.sample_reparametrization_variables(
                 1, is_training=False)["Z"]
-            print sess.run(vae.reconstructed_X, feed_dict={vae.Z: eps})
             out = sess.run(vae.reconstructed_X, feed_dict={vae.Z: eps})
 
             figure[i * 28: (i + 1) * 28, j * 28: (j + 1) *
@@ -96,15 +88,16 @@ def sample_plot():
     ax.get_xaxis().set_visible(False)
     ax.get_yaxis().set_visible(False)
 
-    plt.tight_layout()
     plt.savefig("plots/sampled.png", transparent=True)
 
     plt.close()
 
 
-vae = models.DiscreteVAE("discrete_vae", 784, 50, 10, activation=tf.nn.relu,
-                         initializer=tf.contrib.layers.xavier_initializer)
-vae.build_graph([500, 500, 2000], [2000, 500, 500])
+vae = models.GumboltVAE("discrete_vae", 784, 15, 15, activation=tf.nn.relu,
+                        initializer=tf.contrib.layers.xavier_initializer)
+# vae = models.VAE("standard_vae", 784, 10, activation=tf.nn.relu,
+#                  initializer=tf.contrib.layers.xavier_initializer)
+vae.build_graph([512, 256], [256, 512])
 vae.define_train_step(0.002, train_data.epoch_len * 10)
 
 sess = tf.Session()
@@ -112,7 +105,7 @@ tf.global_variables_initializer().run(session=sess)
 
 with tqdm(range(100), postfix={"loss": "inf"}) as bar:
     for epoch in bar:
-        if epoch % 5 == 0:
+        if epoch % 10 == 0:
             sample_plot()
             regeneration_plot()
 

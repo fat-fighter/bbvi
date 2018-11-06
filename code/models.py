@@ -1,7 +1,7 @@
 import priors
 import tensorflow as tf
 
-from network import FeedForwardNetwork
+from includes.network import FeedForwardNetwork
 
 
 class VAE:
@@ -126,14 +126,17 @@ class DiscreteVAE(VAE):
                 tf.float32, shape=(None, self.latent_dim, self.n_classes), name="epsilon_Z"
             )
             self.temperature = tf.placeholder_with_default(
-                0.001, shape=None, name="temperature"
+                1.0, shape=None, name="temperature"
             )
 
             self.encoder_network = FeedForwardNetwork(name="encoder_network")
 
-            self.logits = self.encoder_network.build(
+            logits = self.encoder_network.build(
                 [("logits", self.latent_dim * self.n_classes)],
                 encoder_layer_sizes, self.X
+            )
+            self.logits = tf.reshape(
+                logits, (-1, self.latent_dim, self.n_classes)
             )
 
             self.latent_variables = {
@@ -147,6 +150,59 @@ class DiscreteVAE(VAE):
 
             lv, eps, params = self.latent_variables["Z"]
             self.Z = lv.inverse_reparametrize(eps, params)
+            self.latent_variables["Z"][2]["Xi"] = self.Z
+
+            self.decoder_network = FeedForwardNetwork(name="decoder_network")
+            self.decoded_X = self.decoder_network.build(
+                [("decoded_X", self.input_dim)], decoder_layer_sizes, self.Z
+            )
+            self.reconstructed_X = tf.nn.sigmoid(self.decoded_X)
+
+
+class GumboltVAE(VAE):
+    def __init__(self, name, input_dim, visible_dim, hidden_dim, activation=None, initializer=None):
+        self.visible_dim = visible_dim
+        self.hidden_dim = hidden_dim
+
+        VAE.__init__(self, name, input_dim, visible_dim + hidden_dim,
+                     activation=activation, initializer=initializer)
+
+        self.n_classes = 2
+
+    def build_graph(self, encoder_layer_sizes, decoder_layer_sizes):
+        with tf.variable_scope(self.name) as _:
+            self.X = tf.placeholder(
+                tf.float32, shape=(None, self.input_dim), name="X"
+            )
+            self.epsilon = tf.placeholder(
+                tf.float32, shape=(None, self.latent_dim, self.n_classes), name="epsilon_Z"
+            )
+            self.temperature = tf.placeholder_with_default(
+                1.0, shape=None, name="temperature"
+            )
+
+            self.encoder_network = FeedForwardNetwork(name="encoder_network")
+
+            logits = self.encoder_network.build(
+                [("logits", self.latent_dim * self.n_classes)],
+                encoder_layer_sizes, self.X
+            )
+            self.logits = tf.reshape(
+                logits, (-1, self.latent_dim, self.n_classes)
+            )
+
+            self.latent_variables = {
+                "Z": (
+                    priors.RBM(
+                        "rbm_prior", self.visible_dim, self.hidden_dim, self.n_classes
+                    ), self.epsilon,
+                    {"logits": self.logits, "temperature": self.temperature}
+                )
+            }
+
+            lv, eps, params = self.latent_variables["Z"]
+            self.Z = lv.inverse_reparametrize(eps, params)
+            self.latent_variables["Z"][2]["zeta"] = self.Z
 
             self.decoder_network = FeedForwardNetwork(name="decoder_network")
             self.decoded_X = self.decoder_network.build(
