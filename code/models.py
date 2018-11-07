@@ -31,7 +31,9 @@ class VAE:
 
             self.latent_variables = {
                 "Z": (
-                    priors.NormalFactorial(self.latent_dim), self.epsilon,
+                    priors.NormalFactorial(
+                        "latent_representation", self.latent_dim
+                    ), self.epsilon,
                     {"mean": self.mean, "log_var": self.log_var}
                 )
             }
@@ -45,18 +47,22 @@ class VAE:
             )
             self.reconstructed_X = tf.nn.sigmoid(self.decoded_X)
 
-    def sample_reparametrization_variables(self, n, feed=False, is_training=True):
+    def sample_reparametrization_variables(self, n, feed=False):
         samples = dict()
-        if feed:
+        if not feed:
             for lv, eps, _ in self.latent_variables.itervalues():
-                samples[eps] = lv.sample_reparametrization_variable(
-                    n, is_training=is_training
-                )
+                samples[eps] = lv.sample_reparametrization_variable(n)
         else:
             for name, (lv, _, _) in self.latent_variables.iteritems():
-                samples[name] = lv.sample_reparametrization_variable(
-                    n, is_training=is_training
-                )
+                samples[name] = lv.sample_reparametrization_variable(n)
+
+        return samples
+
+    def sample_generative_feed(self, n, **kwargs):
+        samples = dict()
+        for name, (lv, _, _) in self.latent_variables.iteritems():
+            kwargs_ = dict() if name not in kwargs else kwargs[name]
+            samples[name] = lv.sample_generative_feed(n, **kwargs_)
 
         return samples
 
@@ -96,9 +102,7 @@ class VAE:
                 self.X: batch
             }
             feed.update(
-                self.sample_reparametrization_variables(
-                    len(batch), feed=True, is_training=True
-                )
+                self.sample_reparametrization_variables(len(batch))
             )
 
             batch_loss, _ = session.run(
@@ -126,7 +130,7 @@ class DiscreteVAE(VAE):
                 tf.float32, shape=(None, self.latent_dim, self.n_classes), name="epsilon_Z"
             )
             self.temperature = tf.placeholder_with_default(
-                1.0, shape=None, name="temperature"
+                [0.1], shape=(1,), name="temperature"
             )
 
             self.encoder_network = FeedForwardNetwork(name="encoder_network")
@@ -142,7 +146,7 @@ class DiscreteVAE(VAE):
             self.latent_variables = {
                 "Z": (
                     priors.DiscreteFactorial(
-                        self.latent_dim, self.n_classes
+                        "discrete-prior", self.latent_dim, self.n_classes
                     ), self.epsilon,
                     {"logits": self.logits, "temperature": self.temperature}
                 )
@@ -150,7 +154,6 @@ class DiscreteVAE(VAE):
 
             lv, eps, params = self.latent_variables["Z"]
             self.Z = lv.inverse_reparametrize(eps, params)
-            self.latent_variables["Z"][2]["Xi"] = self.Z
 
             self.decoder_network = FeedForwardNetwork(name="decoder_network")
             self.decoded_X = self.decoder_network.build(
@@ -160,14 +163,16 @@ class DiscreteVAE(VAE):
 
 
 class GumboltVAE(VAE):
-    def __init__(self, name, input_dim, visible_dim, hidden_dim, activation=None, initializer=None):
+    def __init__(self, name, input_dim, visible_dim, hidden_dim, num_gibbs_samples=200,
+                 gibbs_sampling_gap=10, activation=None, initializer=None):
         self.visible_dim = visible_dim
         self.hidden_dim = hidden_dim
 
         VAE.__init__(self, name, input_dim, visible_dim + hidden_dim,
                      activation=activation, initializer=initializer)
 
-        self.n_classes = 2
+        self.num_gibbs_samples = num_gibbs_samples
+        self.gibbs_sampling_gap = gibbs_sampling_gap
 
     def build_graph(self, encoder_layer_sizes, decoder_layer_sizes):
         with tf.variable_scope(self.name) as _:
@@ -175,28 +180,28 @@ class GumboltVAE(VAE):
                 tf.float32, shape=(None, self.input_dim), name="X"
             )
             self.epsilon = tf.placeholder(
-                tf.float32, shape=(None, self.latent_dim, self.n_classes), name="epsilon_Z"
+                tf.float32, shape=(None, self.latent_dim), name="epsilon_Z"
+            )
+            self.rbm_prior_samples = tf.placeholder(
+                tf.float32, shape=(None, self.latent_dim), name="rbm_prior_samples"
             )
             self.temperature = tf.placeholder_with_default(
-                1.0, shape=None, name="temperature"
+                [0.5], shape=(1,), name="temperature"
             )
 
             self.encoder_network = FeedForwardNetwork(name="encoder_network")
-
-            logits = self.encoder_network.build(
-                [("logits", self.latent_dim * self.n_classes)],
+            self.log_ratios = self.encoder_network.build(
+                [("log_ratios", self.latent_dim)],
                 encoder_layer_sizes, self.X
-            )
-            self.logits = tf.reshape(
-                logits, (-1, self.latent_dim, self.n_classes)
             )
 
             self.latent_variables = {
                 "Z": (
                     priors.RBM(
-                        "rbm_prior", self.visible_dim, self.hidden_dim, self.n_classes
+                        "rbm_prior", self.visible_dim, self.hidden_dim, trainable=True
                     ), self.epsilon,
-                    {"logits": self.logits, "temperature": self.temperature}
+                    {"log_ratios": self.log_ratios, "temperature": self.temperature,
+                        "samples": self.rbm_prior_samples}
                 )
             }
 
@@ -209,3 +214,45 @@ class GumboltVAE(VAE):
                 [("decoded_X", self.input_dim)], decoder_layer_sizes, self.Z
             )
             self.reconstructed_X = tf.nn.sigmoid(self.decoded_X)
+
+    def generate_prior_samples(self, session):
+        return self.latent_variables["Z"][0].generate_gibbs_samples(
+            session, self.num_gibbs_samples, self.gibbs_sampling_gap
+        )
+
+    def define_train_loss(self):
+        self.latent_loss = tf.add_n(
+            [lv.kl_from_prior(params)
+             for lv, _, params in self.latent_variables.itervalues()]
+        )
+        self.recon_loss = tf.reduce_mean(tf.reduce_sum(
+            tf.nn.sigmoid_cross_entropy_with_logits(
+                labels=self.X,
+                logits=self.decoded_X
+            ), axis=1
+        ))
+
+        self.loss = tf.reduce_mean(self.recon_loss + self.latent_loss)
+
+    def train_op(self, session, data):
+        assert(self.train_step is not None)
+
+        rbm_prior_samples = self.generate_prior_samples(session)
+
+        loss = 0.0
+        for batch in data.get_batches():
+            feed = {
+                self.X: batch
+            }
+            feed.update(
+                self.sample_reparametrization_variables(len(batch))
+            )
+            feed[self.rbm_prior_samples] = rbm_prior_samples
+
+            batch_loss, _ = session.run(
+                [self.loss, self.train_step],
+                feed_dict=feed
+            )
+            loss += batch_loss / data.epoch_len
+
+        return loss

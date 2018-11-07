@@ -40,7 +40,7 @@ def regeneration_plot():
 
         return images
 
-    eps = vae.sample_reparametrization_variables(100, is_training=False)["Z"]
+    eps = vae.sample_reparametrization_variables(100, feed=True)["Z"]
 
     orig_X = test_data.data[:100]
     recn_X = sess.run(
@@ -70,14 +70,17 @@ def regeneration_plot():
 def sample_plot():
     figure = np.zeros((280, 280))
 
+    kwargs = {
+        "Z": {"session": sess}
+    }
+
+    eps = vae.sample_generative_feed(100, **kwargs)["Z"]
+    out = sess.run(vae.reconstructed_X, feed_dict={vae.Z: eps})
+
     for i in range(10):
         for j in range(10):
-            eps = vae.sample_reparametrization_variables(
-                1, is_training=False)["Z"]
-            out = sess.run(vae.reconstructed_X, feed_dict={vae.Z: eps})
-
             figure[i * 28: (i + 1) * 28, j * 28: (j + 1) *
-                   28] = out.reshape((28, 28)) * 255
+                   28] = out[10 * i + j].reshape((28, 28)) * 255
 
     ax = plt.axes()
     ax.imshow(figure, cmap="Greys_r")
@@ -93,19 +96,24 @@ def sample_plot():
     plt.close()
 
 
-vae = models.GumboltVAE("discrete_vae", 784, 15, 15, activation=tf.nn.relu,
-                        initializer=tf.contrib.layers.xavier_initializer)
 # vae = models.VAE("standard_vae", 784, 10, activation=tf.nn.relu,
 #                  initializer=tf.contrib.layers.xavier_initializer)
-vae.build_graph([512, 256], [256, 512])
-vae.define_train_step(0.002, train_data.epoch_len * 10)
+
+# vae = models.DiscreteVAE("discrete_vae", 784, 30, 10, activation=tf.nn.relu,
+#                          initializer=tf.contrib.layers.xavier_initializer)
+
+vae = models.GumboltVAE("gumbolt_vae", 784, 60, 140, activation=tf.nn.relu,
+                        initializer=tf.contrib.layers.xavier_initializer)
+
+vae.build_graph([500, 500, 2000], [2000, 500, 500])
+vae.define_train_step(0.0001, train_data.epoch_len * 10, decay_rate=0.9)
 
 sess = tf.Session()
 tf.global_variables_initializer().run(session=sess)
 
-with tqdm(range(100), postfix={"loss": "inf"}) as bar:
+with tqdm(range(1000), postfix={"loss": "inf"}) as bar:
     for epoch in bar:
-        if epoch % 10 == 0:
+        if epoch % 5 == 0:
             sample_plot()
             regeneration_plot()
 

@@ -2,6 +2,7 @@ import math
 import numpy as np
 import pickle as pkl
 import networkx as nx
+import tensorflow as tf
 import scipy.sparse as sp
 
 
@@ -115,3 +116,11 @@ class Dataset:
 def sample_gumbel(shape, eps=1e-20):
     U = np.random.uniform(0, 1, shape)
     return - np.log(eps - np.log(U + eps))
+
+
+def sample_bernoulli(probs):
+    shape = tf.shape(probs)
+    return tf.where(
+        tf.random_uniform(shape) - probs < 0,
+        tf.ones(shape), tf.zeros(shape)
+    )
