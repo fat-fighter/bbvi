@@ -1,9 +1,12 @@
+import sys
 import math
 import numpy as np
 import pickle as pkl
 import networkx as nx
 import tensorflow as tf
 import scipy.sparse as sp
+
+from preprocessing import mask_test_edges, preprocess_graph, sparse_to_tuple
 
 
 def parse_index_file(filename):
@@ -47,21 +50,19 @@ def load_data(datagroup, **args):
         return train_data, test_data
 
     def graph(dataset="citeseer", dir="data/graphs/"):
-        names = ["x", "tx", "allx", "graph"]
+        names = ['x', 'tx', 'allx', 'graph']
         objects = []
         for i in range(len(names)):
-            objects.append(
-                pkl.load(open(
-                    dir + "ind.{}.{}".format(dataset, names[i]))
-                )
-            )
+            with open(dir + "ind.{}.{}".format(dataset, names[i]), 'rb') as f:
+                objects.append(pkl.load(f))
+
         x, tx, allx, graph = tuple(objects)
         test_idx_reorder = parse_index_file(
             dir + "ind.{}.test.index".format(dataset)
         )
         test_idx_range = np.sort(test_idx_reorder)
 
-        if dataset == "citeseer":
+        if dataset == 'citeseer':
             # Fix citeseer dataset (there are some isolated nodes in the graph)
             # Find isolated nodes, add them as zero-vecs into the right position
             test_idx_range_full = range(
@@ -72,9 +73,28 @@ def load_data(datagroup, **args):
 
         features = sp.vstack((allx, tx)).tolil()
         features[test_idx_reorder, :] = features[test_idx_range, :]
+        features = features.todense()
+
         adj = nx.adjacency_matrix(nx.from_dict_of_lists(graph))
 
-        return adj, features
+        adj_orig = adj - sp.dia_matrix(
+            (adj.diagonal()[np.newaxis, :], [0]), shape=adj.shape
+        )
+        adj_orig.eliminate_zeros()
+
+        adj_train, train_edges, test_edges, test_edges_false = mask_test_edges(
+            adj_orig
+        )
+
+        adj_orig = adj_orig.todense()
+
+        adj_norm = preprocess_graph(adj)
+        adj_norm = adj_norm.todense()
+
+        adj_label = adj_train + sp.eye(adj_train.shape[0])
+        adj_label = adj_label.todense()
+
+        return (adj, adj_norm, adj_label, adj_orig, features, adj_train, train_edges), (test_edges, test_edges_false)
 
     if datagroup == "spiral":
         return spiral(**args)
