@@ -1,5 +1,3 @@
-import qupa
-import qupa.pcd as pcd
 import numpy as np
 import tensorflow as tf
 
@@ -30,7 +28,19 @@ class NormalFactorial(LatentVariable):
         return np.random.randn(n, self.dim)
 
     def sample_generative_feed(self, n, **kwargs):
-        return np.random.randn(n, self.dim)
+        if "mean" in kwargs:
+            mean = kwargs["mean"]
+
+            shape = list(mean.shape)
+            shape.insert(0, n)
+
+            samples = np.random.standard_normal(shape)
+            samples += mean + samples
+
+        else:
+            samples = np.random.randn(n, self.dim)
+
+        return samples
 
     def inverse_reparametrize(self, epsilon, parameters):
         assert("mean" in parameters and "log_var" in parameters)
@@ -43,10 +53,10 @@ class NormalFactorial(LatentVariable):
         mean = parameters["mean"]
         log_var = parameters["log_var"]
 
-        res = tf.exp(log_var) + tf.square(mean) - 1. - log_var
-        res = tf.reduce_mean(0.5 * tf.reduce_sum(res, axis=1))
+        kl = tf.exp(log_var) + tf.square(mean) - 1. - log_var
+        kl = tf.reduce_mean(0.5 * tf.reduce_sum(kl, axis=1))
 
-        return res
+        return kl
 
 
 class DiscreteFactorial(LatentVariable):
@@ -60,12 +70,32 @@ class DiscreteFactorial(LatentVariable):
         return sample_gumbel((n, self.dim, self.n_classes))
 
     def sample_generative_feed(self, n, **kwargs):
-        samples = sample_gumbel((n, self.dim, self.n_classes))
-        samples = np.reshape(samples, (-1, self.n_classes))
+
+        if "logits" in kwargs:
+            logits = kwargs["logits"]
+
+            shape = list(logits.shape)
+            shape.insert(0, n)
+
+            samples = sample_gumbel(shape)
+
+            logits = np.reshape(logits, (1, -1, self.n_classes))
+            samples = np.reshape(samples, (n, -1, self.n_classes))
+
+            samples = samples + logits
+
+            samples = np.reshape(samples, (-1, self.n_classes))
+
+        else:
+            shape = (n, self.dim, self.n_classes)
+
+            samples = sample_gumbel(shape)
+            samples = np.reshape(samples, (-1, self.n_classes))
+
         samples = np.asarray(np.equal(
             samples, np.max(samples, 1, keepdims=True)
         ), dtype=samples.dtype)
-        samples = np.reshape(samples, (-1, self.dim, self.n_classes))
+        samples = np.reshape(samples, shape)
 
         return samples
 
@@ -78,7 +108,12 @@ class DiscreteFactorial(LatentVariable):
         res = tf.reshape(epsilon, (-1, self.n_classes))
         res = (logits + res) / parameters["temperature"]
         res = tf.nn.softmax(res)
-        res = tf.reshape(res, (-1, self.dim, self.n_classes))
+
+        if self.n_classes == 2:
+            res = res[:, 0]
+            res = tf.reshape(res, (-1, self.dim))
+        else:
+            res = tf.reshape(res, (-1, self.dim, self.n_classes))
 
         return res
 
@@ -88,17 +123,17 @@ class DiscreteFactorial(LatentVariable):
         logits = tf.reshape(parameters["logits"], (-1, self.n_classes))
         q_z = tf.nn.softmax(logits)
 
-        res = tf.reshape(
+        kl = tf.reshape(
             q_z * (tf.log(q_z + eps) - tf.log(1.0 / self.n_classes)),
             (-1, self.dim * self.n_classes)
         )
-        res = tf.reduce_mean(tf.reduce_sum(res, axis=1))
+        kl = tf.reduce_mean(tf.reduce_sum(kl, axis=1))
 
-        return res
+        return kl
 
 
-class RBM(DiscreteFactorial):
-    def __init__(self, name, visible_dim, hidden_dim, trainable=False, init_gibbs_iters=5000):
+class RBMPrior(DiscreteFactorial):
+    def __init__(self, name, visible_dim, hidden_dim, beta=1.0, trainable=False, init_gibbs_iters=1000):
         DiscreteFactorial.__init__(self, name, visible_dim + hidden_dim, 2)
 
         self.visible_dim = visible_dim
@@ -125,11 +160,13 @@ class RBM(DiscreteFactorial):
             tf.concat([tf.squeeze(self.bv), tf.squeeze(self.bh)], axis=0), 1
         )
 
+        self.beta = beta
+
         self.samples_visible = None
 
     def free_energy(self, samples):
-        samples_visible = tf.slice(samples, [0, 0], [-1, self.visible_dim])
-        samples_hidden = tf.slice(samples, [0, self.visible_dim], [-1, -1])
+        samples_visible = samples[:, :self.visible_dim]
+        samples_hidden = samples[:, self.visible_dim:]
 
         energy = tf.matmul(samples, self.b) + tf.reduce_sum(
             tf.matmul(samples_visible, self.w) * samples_hidden, 1, keepdims=True
@@ -170,22 +207,24 @@ class RBM(DiscreteFactorial):
 
         return self._gibbs_vhv(samples_visible)
 
-    def generate_gibbs_samples(self, session, k, t=1):
+    def generate_gibbs_samples(self, session, k, g=1):
         clip = 0
         if self.samples_visible is None:
-            clip = self.init_gibbs_iters / t
+            clip = self.init_gibbs_iters // g
             k += clip
 
             probs = tf.ones((1, self.visible_dim)) / 2.0
-            self.samples_visible = sample_bernoulli(probs)
+
+            samples_visible = sample_bernoulli(probs)
+            self.samples_visible = self._gibbs_vhv_k(
+                samples_visible, self.init_gibbs_iters
+            )[0]
 
         def sample(samples, _):
-            samples_visible = tf.slice(
-                samples, [0, 0], [-1, self.visible_dim]
-            )
+            samples_visible = samples[:, :self.visible_dim]
 
             samples = tf.concat(self._gibbs_vhv_k(
-                samples_visible, t
+                samples_visible, g
             ), axis=1)
 
             return samples
@@ -211,7 +250,7 @@ class RBM(DiscreteFactorial):
 
     def sample_generative_feed(self, n, **kwargs):
         assert("session" in kwargs)
-        return self.generate_gibbs_samples(kwargs["session"], n, t=100)
+        return self.generate_gibbs_samples(kwargs["session"], n, g=100)
 
     def log_partition(self, samples):
         return - tf.reduce_mean(self.free_energy(samples))
@@ -239,6 +278,7 @@ class RBM(DiscreteFactorial):
         samples = parameters["samples"]
 
         log_posterior = tf.reduce_sum(
+            # zeta * tf.log(probs + eps) + (1 - zeta) * tf.log(1 - probs + eps),
             tf.log(zeta * probs + (1 - zeta) * (1 - probs)),
             axis=-1
         )
@@ -249,4 +289,4 @@ class RBM(DiscreteFactorial):
         )
         kl += self.log_partition(samples)
 
-        return kl
+        return self.beta * kl

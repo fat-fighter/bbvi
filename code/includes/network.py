@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from layers import GraphConvolutionLayer
+from includes.layers import GraphConvolutionLayer
 
 
 class FeedForwardNetwork:
@@ -12,14 +12,14 @@ class FeedForwardNetwork:
         self.initializer = initializer
 
     def build(self, output_dims, layer_sizes, input_var, reuse=False):
-        layers = []
         with tf.variable_scope(self.name, reuse=reuse) as _:
             input_var = tf.layers.flatten(input_var)
+            layers = [input_var]
 
             for index, layer_size in enumerate(layer_sizes):
                 layers.append(
                     tf.layers.dense(
-                        input_var if index == 0 else layers[index - 1],
+                        layers[index],
                         layer_size,
                         activation=self.activation,
                         kernel_initializer=self.initializer,
@@ -33,12 +33,13 @@ class FeedForwardNetwork:
                     tf.layers.dense(
                         layers[-1],
                         output_dim,
+                        activation=None,
                         kernel_initializer=self.initializer,
                         name="network_output/" + name
                     )
                 )
 
-        self.layers = layers
+        self.layers = layers[1:]
 
         if len(self.outputs) == 1:
             return self.outputs[0]
@@ -60,9 +61,10 @@ class FeedForwardNetwork:
 
 
 class GraphConvolutionalNetwork:
-    def __init__(self, name, activation=None, initializer=None, weight_decay_coeff=0.5):
+    def __init__(self, name, activation=None, initializer=None, dropout=0.0):
         self.name = name
-        self.weight_decay_coeff = weight_decay_coeff
+
+        self.dropout = dropout
 
         self.activation = activation
         self.initializer = initializer
@@ -79,6 +81,7 @@ class GraphConvolutionalNetwork:
                         layer_size,
                         layer_sizes[index + 1],
                         adjacency_matrix,
+                        dropout=self.dropout,
                         activation=self.activation,
                         initializer=self.initializer,
                         name="network_layer_" + str(index + 1)
@@ -93,6 +96,7 @@ class GraphConvolutionalNetwork:
                         layer_sizes[-1],
                         output_dim,
                         adjacency_matrix,
+                        dropout=self.dropout,
                         initializer=self.initializer,
                         name="network_output/" + name
                     )

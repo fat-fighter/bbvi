@@ -28,15 +28,15 @@ def mask_test_edges(adj):
     adj_tuple = sparse_to_tuple(adj_triu)
     edges = adj_tuple[0]
     edges_all = sparse_to_tuple(adj)[0]
-    num_test = int(np.floor(edges.shape[0] / 10.))
+    num_test = edges.shape[0] // 10
 
-    all_edge_idx = range(edges.shape[0])
+    all_edge_idx = np.arange(edges.shape[0])
     np.random.shuffle(all_edge_idx)
 
     test_edge_idx = all_edge_idx[:num_test]
-    test_edges = edges[test_edge_idx]
 
-    train_edges = np.delete(edges, test_edge_idx, axis=0)
+    test_edges = edges[test_edge_idx]
+    train_edges = edges[all_edge_idx[num_test:]]
 
     def ismember(a, b, tol=5):
         rows_close = np.all(np.round(a - b[:, None], tol) == 0, axis=-1)
@@ -68,5 +68,4 @@ def mask_test_edges(adj):
     )
     adj_train = adj_train + adj_train.T
 
-    # NOTE: these edge lists only contain single direction of edge!
     return adj_train, train_edges, test_edges, test_edges_false
