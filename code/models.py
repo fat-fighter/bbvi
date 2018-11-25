@@ -674,7 +674,7 @@ class GumboltVGAE(GVAE):
             )
 
             self.temperature = tf.placeholder_with_default(
-                0.1, shape=(), name="temperature"
+                0.2, shape=(), name="temperature"
             )
             self.dropout = tf.placeholder_with_default(
                 0.0, shape=(), name="dropout"

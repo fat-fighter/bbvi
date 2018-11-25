@@ -278,7 +278,6 @@ class RBMPrior(DiscreteFactorial):
         samples = parameters["samples"]
 
         log_posterior = tf.reduce_sum(
-            # zeta * tf.log(probs + eps) + (1 - zeta) * tf.log(1 - probs + eps),
             tf.log(zeta * probs + (1 - zeta) * (1 - probs)),
             axis=-1
         )

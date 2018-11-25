@@ -1,2 +1,0 @@
-model_checkpoint_path: "gvae.ckpt"
-all_model_checkpoint_paths: "gvae.ckpt"
